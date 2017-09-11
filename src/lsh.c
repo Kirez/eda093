@@ -112,32 +112,34 @@ char *locate_executable(char *name) {
   char *file_path = NULL;
   char *wd = getcwd(NULL, 0);
   char *path_env = getenv("PATH");
-  char *token_str = malloc(sizeof(char) * strlen(path_env));
-  token_str = strcpy(token_str, path_env);
+  char *token_str = malloc(sizeof(char) * (strlen(path_env)+1)); if (token_str == NULL) { return NULL; }
+
+  strcpy(token_str, path_env);
 
   char *env_entry = strtok(token_str, ":");
   int entry_len = strlen(env_entry);
   int name_len = strlen(name);
-  char adjusted = 0;
 
   do {
     if (chdir(env_entry) != 0) {
       continue;
     }
 
+    char adjusted = 0;
+
     if (env_entry[entry_len - 1] != '/') {
-      char *tmp = malloc(sizeof(char) * (entry_len + 1));
-      tmp = strcpy(tmp, env_entry);
-      tmp = strcat(tmp, "/");
+      char *tmp = malloc(sizeof(char) * (entry_len + 2)); if (tmp == NULL) { return NULL; }
+      strcpy(tmp, env_entry);
+      strcat(tmp, "/");
       env_entry = tmp;
       entry_len++;
       adjusted = 1;
     }
 
-    file_path = malloc(sizeof(char) * (entry_len + name_len));
-    file_path = strcpy(file_path, env_entry);
-    file_path = strcat(file_path, name);
+    file_path = malloc(sizeof(char) * (entry_len + name_len + 1)); if (file_path == NULL) { return NULL; }
 
+    strcpy(file_path, env_entry);
+    strcat(file_path, name);
 
     if (adjusted == 1) { free(env_entry); }
 
