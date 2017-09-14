@@ -36,6 +36,7 @@ void PrintCommand(int, Command *);
 void PrintPgm(Pgm *);
 void stripwhite(char *);
 char *locate_executable(char *name);
+char *locate_executable2(char *name);
 
 /* When non-zero, this global means the user is done using this program. */
 int done = 0;
@@ -75,7 +76,7 @@ int main(void) {
           fprintf(stderr, "Aborting: Empty program from parser");
         }
 
-        char *executable = locate_executable(cmd.pgm->pgmlist[0]);
+        char *executable = locate_executable2(cmd.pgm->pgmlist[0]);
 
         if (executable != NULL) {
           pid_t pid = fork();
@@ -112,7 +113,8 @@ char *locate_executable(char *name) {
   char *file_path = NULL;
   char *wd = getcwd(NULL, 0);
   char *path_env = getenv("PATH");
-  char *token_str = malloc(sizeof(char) * (strlen(path_env)+1)); if (token_str == NULL) { return NULL; }
+  char *token_str = malloc(sizeof(char) * (strlen(path_env) + 1));
+  if (token_str == NULL) { return NULL; }
 
   strcpy(token_str, path_env);
 
@@ -128,7 +130,8 @@ char *locate_executable(char *name) {
     char adjusted = 0;
 
     if (env_entry[entry_len - 1] != '/') {
-      char *tmp = malloc(sizeof(char) * (entry_len + 2)); if (tmp == NULL) { return NULL; }
+      char *tmp = malloc(sizeof(char) * (entry_len + 2));
+      if (tmp == NULL) { return NULL; }
       strcpy(tmp, env_entry);
       strcat(tmp, "/");
       env_entry = tmp;
@@ -136,7 +139,8 @@ char *locate_executable(char *name) {
       adjusted = 1;
     }
 
-    file_path = malloc(sizeof(char) * (entry_len + name_len + 1)); if (file_path == NULL) { return NULL; }
+    file_path = malloc(sizeof(char) * (entry_len + name_len + 1));
+    if (file_path == NULL) { return NULL; }
 
     strcpy(file_path, env_entry);
     strcat(file_path, name);
@@ -160,6 +164,49 @@ char *locate_executable(char *name) {
   free(wd);
   free(token_str);
   return file_path;
+}
+
+char *locate_executable2(char *name) {
+  int name_len = strlen(name);
+  char *executable_location = NULL;
+  int executable_location_len;
+  char *path_env = getenv("PATH");
+  char *token_str = malloc(sizeof(char) * (strlen(path_env) + 1));
+  if (token_str == NULL) { return NULL; }
+  char *env_entry;
+  int env_entry_len;
+
+  strcpy(token_str, path_env);
+  env_entry = strtok(token_str, ":");
+
+  do {
+    env_entry_len = strlen(env_entry);
+    executable_location_len = 1 + env_entry_len + name_len;
+
+    char adjust = 0;
+    if (env_entry[env_entry_len - 1] != '/') {
+      executable_location_len += 1;
+      adjust = 1;
+    }
+
+    executable_location = calloc(executable_location_len, sizeof(char));
+    if (executable_location == NULL) { return NULL; }
+    strcpy(executable_location, env_entry);
+    if (adjust) { strcat(executable_location, "/"); }
+    strcat(executable_location, name);
+
+    if (access(executable_location, X_OK) == 0) {
+      break;
+    } else {
+      free(executable_location);
+      executable_location = NULL;
+    }
+
+    env_entry = strtok(NULL, ":");
+  } while (env_entry != NULL);
+
+  free(token_str);
+  return executable_location;
 }
 
 /*
