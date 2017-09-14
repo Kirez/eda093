@@ -27,6 +27,7 @@
 #include <sys/wait.h>
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 
 /*
  * Function declarations
@@ -36,6 +37,7 @@ void PrintCommand(int, Command *);
 void PrintPgm(Pgm *);
 void stripwhite(char *);
 char *locate_executable(char *name);
+pid_t fork_executable(char *executable, char **argv, int read_pipe[2], int write_pipe[2]);
 
 /* When non-zero, this global means the user is done using this program. */
 int done = 0;
@@ -69,7 +71,7 @@ int main(void) {
       if (*line) {
         add_history(line);
         /* execute it */
-        parse(line, &cmd);
+        n = parse(line, &cmd);
 
         if (cmd.pgm->pgmlist[0] == NULL) {
           fprintf(stderr, "Aborting: Empty program from parser");
@@ -78,21 +80,23 @@ int main(void) {
         char *executable = locate_executable(cmd.pgm->pgmlist[0]);
 
         if (executable != NULL) {
-          pid_t pid = fork();
+          int read_pipe[2];
+          int write_pipe[2];
 
-          assert(pid >= 0);
+          pipe(read_pipe);
+          pipe(write_pipe);
 
-          if (pid == 0) {
-            execvp(executable, cmd.pgm->pgmlist);
-            fprintf(stderr, "Error: execvp failed with code %d\n", errno);
-          } else {
-            int status;
-            wait(&status);
-            if (status != 0) {
-              printf("%d ", status);
-            }
+          fork_executable(executable, cmd.pgm->pgmlist, read_pipe, write_pipe);
+          char buf[1024];
+          int read_len;
+
+          while ((read_len = read(read_pipe[0], buf, 1024)) > 0) {
+            write(STDOUT_FILENO, buf, read_len);
           }
 
+          close(read_pipe[0]);
+
+          wait(NULL);
           free(executable);
         } else {
           printf("lsh: command not found: %s\n", cmd.pgm->pgmlist[0]);
@@ -106,6 +110,27 @@ int main(void) {
     }
   }
   return 0;
+}
+
+pid_t fork_executable(char *executable, char **argv, int read_pipe[2], int write_pipe[2]) {
+  pid_t pid = fork();
+
+  if (pid < 0) {
+    fprintf(stderr, "ERROR: fork failed (%d)\n", errno);
+    return -1;
+  } else if(pid == 0) {
+    dup2(write_pipe[0], STDIN_FILENO);
+    dup2(read_pipe[1], STDOUT_FILENO);
+    close(read_pipe[0]);
+    close(write_pipe[1]);
+    execvp(executable, argv);
+    return -1;
+  } else {
+    close(read_pipe[1]);
+    close(write_pipe[0]);
+  }
+
+  return pid;
 }
 
 char *locate_executable(char *name) {
