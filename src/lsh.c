@@ -124,6 +124,7 @@ char *locate_executable(char *name) {
 
   do {
     if (chdir(env_entry) != 0) {
+      env_entry = strtok(NULL, ":");
       continue;
     }
 
