@@ -36,7 +36,6 @@ void PrintCommand(int, Command *);
 void PrintPgm(Pgm *);
 void stripwhite(char *);
 char *locate_executable(char *name);
-char *locate_executable2(char *name);
 
 /* When non-zero, this global means the user is done using this program. */
 int done = 0;
@@ -76,7 +75,7 @@ int main(void) {
           fprintf(stderr, "Aborting: Empty program from parser");
         }
 
-        char *executable = locate_executable2(cmd.pgm->pgmlist[0]);
+        char *executable = locate_executable(cmd.pgm->pgmlist[0]);
 
         if (executable != NULL) {
           pid_t pid = fork();
@@ -110,64 +109,6 @@ int main(void) {
 }
 
 char *locate_executable(char *name) {
-  char *file_path = NULL;
-  char *wd = getcwd(NULL, 0);
-  char *path_env = getenv("PATH");
-  char *token_str = malloc(sizeof(char) * (strlen(path_env) + 1));
-  if (token_str == NULL) { return NULL; }
-
-  strcpy(token_str, path_env);
-
-  char *env_entry = strtok(token_str, ":");
-  int entry_len = strlen(env_entry);
-  int name_len = strlen(name);
-
-  do {
-    if (chdir(env_entry) != 0) {
-      env_entry = strtok(NULL, ":");
-      continue;
-    }
-
-    char adjusted = 0;
-
-    if (env_entry[entry_len - 1] != '/') {
-      char *tmp = malloc(sizeof(char) * (entry_len + 2));
-      if (tmp == NULL) { return NULL; }
-      strcpy(tmp, env_entry);
-      strcat(tmp, "/");
-      env_entry = tmp;
-      entry_len++;
-      adjusted = 1;
-    }
-
-    file_path = malloc(sizeof(char) * (entry_len + name_len + 1));
-    if (file_path == NULL) { return NULL; }
-
-    strcpy(file_path, env_entry);
-    strcat(file_path, name);
-
-    if (adjusted == 1) { free(env_entry); }
-
-    if (access(file_path, X_OK) == 0) {
-      break;
-    } else {
-      free(file_path);
-      file_path = NULL;
-    }
-
-    env_entry = strtok(NULL, ":");
-  } while (env_entry != NULL);
-
-  chdir(wd);
-  free(wd);
-
-  wd = getcwd(NULL, 0);
-  free(wd);
-  free(token_str);
-  return file_path;
-}
-
-char *locate_executable2(char *name) {
   int name_len = strlen(name);
   char *executable_location = NULL;
   int executable_location_len;
