@@ -38,6 +38,7 @@ void PrintPgm(Pgm *);
 void stripwhite(char *);
 char *locate_executable(char *name);
 pid_t fork_executable(char *executable, char **argv, int read_pipe[2], int write_pipe[2]);
+pid_t fork_executable2(char *executable, char **argv, int io_fd[2]);
 
 /* When non-zero, this global means the user is done using this program. */
 int done = 0;
@@ -77,31 +78,65 @@ int main(void) {
           fprintf(stderr, "Aborting: Empty program from parser");
         }
 
-        char *executable = locate_executable(cmd.pgm->pgmlist[0]);
+        int fd_chain_out;
+        int fd_chain_in;
 
-        if (executable != NULL) {
-          int read_pipe[2];
-          int write_pipe[2];
+        /*  0: Read file descriptor for child's standard out
+         *  1: Write file descriptor for child's standard in
+         *  2: Read file descriptor for child's standard error
+         * */
+        int fd_io_last[3];
+        int fd_io[3];
+        Pgm *pgm = cmd.pgm;
 
-          pipe(read_pipe);
-          pipe(write_pipe);
+        char *executable = locate_executable(pgm->pgmlist[0]);
 
-          fork_executable(executable, cmd.pgm->pgmlist, read_pipe, write_pipe);
-          char buf[1024];
-          int read_len;
+        if (executable == NULL) { printf("lsh: command not found: %s\n", pgm->pgmlist[0]);}
 
-          while ((read_len = read(read_pipe[0], buf, 1024)) > 0) {
-            write(STDOUT_FILENO, buf, read_len);
-          }
+        fork_executable2(executable, cmd.pgm->pgmlist, fd_io_last);
 
-          close(read_pipe[0]);
+        fd_chain_out = fd_io_last[0];
 
-          wait(NULL);
-          free(executable);
-        } else {
-          printf("lsh: command not found: %s\n", cmd.pgm->pgmlist[0]);
+        if (pgm->next != NULL) {
+          do {
+            pgm = pgm->next;
+            executable = locate_executable(pgm->pgmlist[0]);
+
+            if (executable == NULL) { return -1; } //TODO Do not do this
+
+            fork_executable2(executable, pgm->pgmlist, fd_io); //TODO handle zombie apocalypse (OS denies fork())
+            dup2(fd_io[0], fd_io_last[1]);
+
+            //After this fork is linked to the last fork we set this forks' standard input/output as old
+            fd_io_last[0] = fd_io[0];
+            fd_io_last[1] = fd_io[1];
+
+
+          } while (pgm->next != NULL);
         }
 
+        fd_chain_in = fd_io_last[1];
+
+        char buf[1024];
+        int read_len;
+
+        while ((read_len = read(fd_chain_out, buf, 1024)) > 0) {
+          write(STDOUT_FILENO, buf, read_len);
+        }
+
+        printf("%d\n", read_len);
+
+
+        //TODO redirects
+
+        //TODO maybe read and write to standard out
+
+
+
+
+
+
+        while(wait(NULL) > 0);
       }
     }
 
@@ -110,6 +145,49 @@ int main(void) {
     }
   }
   return 0;
+}
+
+pid_t fork_executable2(char *executable, char **argv, int io_fd[3]) {
+  int read_pipe[2];
+  int write_pipe[2];
+  int error_pipe[2];
+
+  if (pipe(read_pipe) < 0) {
+    fprintf(stderr, "ERROR: read pipe failed (%d)\n", errno);
+    return -1;
+  }
+  if (pipe(write_pipe) < 0) {
+    fprintf(stderr, "ERROR: write pipe failed (%d)\n", errno);
+    return -1;
+  }
+  if (pipe(error_pipe) < 0) {
+    fprintf(stderr, "ERROR: error pipe failed (%d)\n", errno);
+  }
+
+  pid_t pid = fork();
+
+  if (pid < 0) {
+    fprintf(stderr, "ERROR: fork failed (%d)\n", errno);
+    return -1;
+  } else if(pid == 0) {
+    dup2(write_pipe[0], STDIN_FILENO);
+    dup2(read_pipe[1], STDOUT_FILENO);
+    dup2(error_pipe[1], STDERR_FILENO);
+    close(read_pipe[0]);
+    close(write_pipe[1]);
+    close(error_pipe[0]);
+    execvp(executable, argv);
+    return -1; // Execution never reaches this point assuming execvp is successful
+  } else {
+    close(read_pipe[1]);
+    close(write_pipe[0]);
+    close(error_pipe[1]);
+    io_fd[0] = read_pipe[0];
+    io_fd[1] = write_pipe[1];
+    io_fd[2] = error_pipe[0];
+  }
+
+  return pid;
 }
 
 pid_t fork_executable(char *executable, char **argv, int read_pipe[2], int write_pipe[2]) {
