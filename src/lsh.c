@@ -39,6 +39,7 @@ void stripwhite(char *);
 char *locate_executable(char *name);
 pid_t fork_executable(char *executable, char **argv, int read_pipe[2], int write_pipe[2]);
 pid_t fork_executable2(char *executable, char **argv, int io_fd[2]);
+pid_t fork_executable3(char *executable, char**argv, int in_pipe[2], int out_pipe[2]);
 
 /* When non-zero, this global means the user is done using this program. */
 int done = 0;
@@ -78,24 +79,27 @@ int main(void) {
           fprintf(stderr, "Aborting: Empty program from parser");
         }
 
-        int fd_chain_out;
-        int fd_chain_in;
-
-        /*  0: Read file descriptor for child's standard out
-         *  1: Write file descriptor for child's standard in
-         *  2: Read file descriptor for child's standard error
-         * */
-        int fd_io_last[3];
-        int fd_io[3];
         Pgm *pgm = cmd.pgm;
+
+        int chain_in[2];
+        int chain_out[2];
+        int in_pipe[2];
+        int out_pipe[2];
+
+        pipe(in_pipe);
+        pipe(out_pipe);
 
         char *executable = locate_executable(pgm->pgmlist[0]);
 
         if (executable == NULL) { printf("lsh: command not found: %s\n", pgm->pgmlist[0]);}
 
-        fork_executable2(executable, cmd.pgm->pgmlist, fd_io_last);
+        fork_executable3(executable, cmd.pgm->pgmlist, in_pipe, out_pipe);
 
-        fd_chain_out = fd_io_last[0];
+        chain_out[0] = out_pipe[0];
+        chain_out[1] = out_pipe[1];
+
+        out_pipe[0] = in_pipe[0];
+        out_pipe[1] = in_pipe[1];
 
         if (pgm->next != NULL) {
           do {
@@ -104,37 +108,38 @@ int main(void) {
 
             if (executable == NULL) { return -1; } //TODO Do not do this
 
-            fork_executable2(executable, pgm->pgmlist, fd_io); //TODO handle zombie apocalypse (OS denies fork())
-            dup2(fd_io[0], fd_io_last[1]);
+            pipe(in_pipe);
 
-            //After this fork is linked to the last fork we set this forks' standard input/output as old
-            fd_io_last[0] = fd_io[0];
-            fd_io_last[1] = fd_io[1];
+            fork_executable3(executable, pgm->pgmlist, in_pipe, out_pipe); //TODO handle zombie apocalypse (OS denies fork())
+
+            close(out_pipe[0]);
+            close(out_pipe[1]);
+
+            out_pipe[0] = in_pipe[0];
+            out_pipe[1] = in_pipe[1];
 
 
           } while (pgm->next != NULL);
         }
 
-        fd_chain_in = fd_io_last[1];
+        chain_in[0] = in_pipe[0];
+        chain_in[1] = in_pipe[1];
+
+        //Close unused ends
+        close(chain_in[0]); //We do not read input
+        close(chain_out[1]); //We do not write output
 
         char buf[1024];
         int read_len;
 
-        while ((read_len = read(fd_chain_out, buf, 1024)) > 0) {
+        while ((read_len = read(chain_out[0], buf, 1024)) > 0) {
           write(STDOUT_FILENO, buf, read_len);
         }
-
-        printf("%d\n", read_len);
 
 
         //TODO redirects
 
         //TODO maybe read and write to standard out
-
-
-
-
-
 
         while(wait(NULL) > 0);
       }
@@ -145,6 +150,27 @@ int main(void) {
     }
   }
   return 0;
+}
+
+//Forks an executable and redirects standard input and output to provided pipes and closes unused pipes on child's end
+pid_t fork_executable3(char *executable, char **argv, int in_pipe[2], int out_pipe[2]) {
+  pid_t pid = fork();
+
+  if (pid == 0) {
+    //Child
+    dup2(in_pipe[0], STDIN_FILENO); //Makes it so reading from standard in is equal to reading from parent's write end
+    dup2(out_pipe[1], STDOUT_FILENO); //Makes it so writing to standard out is equal to writing to parent's read end
+    close(in_pipe[0]); //Replaced by STDIN_FILENO
+    close(in_pipe[1]); //Parent's write end
+    close(out_pipe[0]); //Parent's read end
+    close(out_pipe[1]); //Replaced by STDOUT_FILENO
+    execvp(executable, argv);
+    return -1; //Only gets here if running of executable failed
+  }
+
+  //Parent
+
+  return pid;
 }
 
 pid_t fork_executable2(char *executable, char **argv, int io_fd[3]) {
