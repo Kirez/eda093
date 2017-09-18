@@ -39,7 +39,8 @@ void stripwhite(char *);
 char *locate_executable(char *name);
 pid_t fork_executable(char *executable, char **argv, int read_pipe[2], int write_pipe[2]);
 pid_t fork_executable2(char *executable, char **argv, int io_fd[2]);
-pid_t fork_executable3(char *executable, char**argv, int in_pipe[2], int out_pipe[2]);
+pid_t fork_executable3(char *executable, char **argv, int in_pipe[2], int out_pipe[2]);
+void handle_command(Command *cmd);
 
 /* When non-zero, this global means the user is done using this program. */
 int done = 0;
@@ -75,73 +76,7 @@ int main(void) {
         /* execute it */
         n = parse(line, &cmd);
 
-        if (cmd.pgm->pgmlist[0] == NULL) {
-          fprintf(stderr, "Aborting: Empty program from parser");
-        }
-
-        Pgm *pgm = cmd.pgm;
-
-        int chain_in[2];
-        int chain_out[2];
-        int in_pipe[2];
-        int out_pipe[2];
-
-        pipe(in_pipe);
-        pipe(out_pipe);
-
-        char *executable = locate_executable(pgm->pgmlist[0]);
-
-        if (executable == NULL) { printf("lsh: command not found: %s\n", pgm->pgmlist[0]);}
-
-        fork_executable3(executable, cmd.pgm->pgmlist, in_pipe, out_pipe);
-
-        chain_out[0] = out_pipe[0];
-        chain_out[1] = out_pipe[1];
-
-        out_pipe[0] = in_pipe[0];
-        out_pipe[1] = in_pipe[1];
-
-        if (pgm->next != NULL) {
-          do {
-            pgm = pgm->next;
-            executable = locate_executable(pgm->pgmlist[0]);
-
-            if (executable == NULL) { return -1; } //TODO Do not do this
-
-            pipe(in_pipe);
-
-            fork_executable3(executable, pgm->pgmlist, in_pipe, out_pipe); //TODO handle zombie apocalypse (OS denies fork())
-
-            close(out_pipe[0]);
-            close(out_pipe[1]);
-
-            out_pipe[0] = in_pipe[0];
-            out_pipe[1] = in_pipe[1];
-
-
-          } while (pgm->next != NULL);
-        }
-
-        chain_in[0] = in_pipe[0];
-        chain_in[1] = in_pipe[1];
-
-        //Close unused ends
-        close(chain_in[0]); //We do not read input
-        close(chain_out[1]); //We do not write output
-
-        char buf[1024];
-        int read_len;
-
-        while ((read_len = read(chain_out[0], buf, 1024)) > 0) {
-          write(STDOUT_FILENO, buf, read_len);
-        }
-
-
-        //TODO redirects
-
-        //TODO maybe read and write to standard out
-
-        while(wait(NULL) > 0);
+        handle_command(&cmd);
       }
     }
 
@@ -152,19 +87,99 @@ int main(void) {
   return 0;
 }
 
+void handle_command(Command *cmd) {
+  if (cmd == NULL) { return; }
+  if (cmd->pgm == NULL) { return; }
+  Pgm *pgm = cmd->pgm;
+  if (pgm->pgmlist == NULL) { return; }
+
+  int chain_in[2];
+  int chain_out[2];
+  int in_pipe[2];
+  int out_pipe[2];
+
+  char *executable = locate_executable(pgm->pgmlist[0]);
+
+  if (executable == NULL) {
+    printf("lsh: command not found: %s\n", pgm->pgmlist[0]);
+    return;
+  }
+
+  if (pipe(in_pipe) < 0 || pipe(out_pipe) < 0) {
+    fprintf(stderr, "ERROR: system call pipe failed (%d)\n", errno);
+  }
+
+  fork_executable3(executable, pgm->pgmlist, in_pipe, out_pipe);
+
+  chain_out[0] = out_pipe[0];
+  chain_out[1] = out_pipe[1];
+
+  out_pipe[0] = in_pipe[0];
+  out_pipe[1] = in_pipe[1];
+
+  while (pgm->next != NULL) {
+    pgm = pgm->next;
+    executable = locate_executable(pgm->pgmlist[0]);
+
+    if (executable == NULL) { return; } //TODO Do not do this
+
+    pipe(in_pipe);
+
+    fork_executable3(executable,
+                     pgm->pgmlist,
+                     in_pipe,
+                     out_pipe); //TODO handle zombie apocalypse (OS denies fork())
+
+    close(out_pipe[0]);
+    close(out_pipe[1]);
+
+    out_pipe[0] = in_pipe[0];
+    out_pipe[1] = in_pipe[1];
+
+  }
+
+  chain_in[0] = in_pipe[0];
+  chain_in[1] = in_pipe[1];
+
+  //Close unused ends
+  close(chain_in[0]); //We do not read input
+  close(chain_out[1]); //We do not write output
+
+  char buf[1024];
+  int read_len;
+
+  while ((read_len = read(chain_out[0], buf, 1024)) > 0) {
+    write(STDOUT_FILENO, buf, read_len);
+  }
+
+
+  //TODO redirects
+
+  //TODO maybe read and write to standard out
+
+  while (wait(NULL) > 0);
+
+}
+
 //Forks an executable and redirects standard input and output to provided pipes and closes unused pipes on child's end
 pid_t fork_executable3(char *executable, char **argv, int in_pipe[2], int out_pipe[2]) {
   pid_t pid = fork();
 
   if (pid == 0) {
     //Child
-    dup2(in_pipe[0], STDIN_FILENO); //Makes it so reading from standard in is equal to reading from parent's write end
-    dup2(out_pipe[1], STDOUT_FILENO); //Makes it so writing to standard out is equal to writing to parent's read end
-    close(in_pipe[0]); //Replaced by STDIN_FILENO
-    close(in_pipe[1]); //Parent's write end
-    close(out_pipe[0]); //Parent's read end
-    close(out_pipe[1]); //Replaced by STDOUT_FILENO
-    execvp(executable, argv);
+    //Makes it so reading from standard in is equal to reading from parent's write end
+    dup2(in_pipe[0], STDIN_FILENO);
+    //Makes it so writing to standard out is equal to writing to parent's read end
+    dup2(out_pipe[1], STDOUT_FILENO);
+    //Replaced by STDIN_FILENO
+    close(in_pipe[0]);
+    //close Parent's write end
+    close(in_pipe[1]);
+    //close Parent's read end
+    close(out_pipe[0]);
+    //Replaced by STDOUT_FILENO
+    close(out_pipe[1]);
+    execv(executable, argv);
     return -1; //Only gets here if running of executable failed
   }
 
@@ -195,7 +210,7 @@ pid_t fork_executable2(char *executable, char **argv, int io_fd[3]) {
   if (pid < 0) {
     fprintf(stderr, "ERROR: fork failed (%d)\n", errno);
     return -1;
-  } else if(pid == 0) {
+  } else if (pid == 0) {
     dup2(write_pipe[0], STDIN_FILENO);
     dup2(read_pipe[1], STDOUT_FILENO);
     dup2(error_pipe[1], STDERR_FILENO);
@@ -222,7 +237,7 @@ pid_t fork_executable(char *executable, char **argv, int read_pipe[2], int write
   if (pid < 0) {
     fprintf(stderr, "ERROR: fork failed (%d)\n", errno);
     return -1;
-  } else if(pid == 0) {
+  } else if (pid == 0) {
     dup2(write_pipe[0], STDIN_FILENO);
     dup2(read_pipe[1], STDOUT_FILENO);
     close(read_pipe[0]);
