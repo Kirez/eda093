@@ -76,6 +76,8 @@ int main(void) {
         /* execute it */
         n = parse(line, &cmd);
 
+		// TODO allt stuff ligger där
+		
         handle_command(&cmd);
       }
     }
@@ -92,12 +94,21 @@ void handle_command(Command *cmd) {
   if (cmd->pgm == NULL) { return; }
   Pgm *pgm = cmd->pgm;
   if (pgm->pgmlist == NULL) { return; }
-
+  
+  // creates file descriptors for redirects of rstdout and rstdin
+  int fd_out;
+  int fd_in;
+  fd_out = open(cmd->rstdout, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+  fd_in = open(cmd->rstdin, O_RDONLY);
+  
+  // chain_in/out is the input/output pipe for the entire chain
   int chain_in[2];
   int chain_out[2];
+  // In/Out pipe variables for use during the chaining
   int in_pipe[2];
   int out_pipe[2];
 
+  // The last (and possibly only) executable
   char *executable = locate_executable(pgm->pgmlist[0]);
 
   if (executable == NULL) {
@@ -105,44 +116,72 @@ void handle_command(Command *cmd) {
     return;
   }
 
+  // Initialize pipes for te last executable and check for errors
   if (pipe(in_pipe) < 0 || pipe(out_pipe) < 0) {
     fprintf(stderr, "ERROR: system call pipe failed (%d)\n", errno);
   }
 
+  // Redirect if redirection target was successfully opened
+  if (fd_out >= 0) {
+    close(out_pipe[1]);
+    out_pipe[1] = fd_out;
+  }
+  if (pgm->next == NULL && fd_in >= 0) {
+     close(in_pipe[0]);
+    in_pipe[0] = fd_in;
+  }
+
+  // Start last executable and connect pipes
   fork_executable3(executable, pgm->pgmlist, in_pipe, out_pipe);
 
+  // Save pipes of the last executable
   chain_out[0] = out_pipe[0];
   chain_out[1] = out_pipe[1];
 
+  // The input pipes of the last executable is now the output pipe of the next executable
   out_pipe[0] = in_pipe[0];
   out_pipe[1] = in_pipe[1];
 
+  // Goes through all executables left
   while (pgm->next != NULL) {
+
     pgm = pgm->next;
     executable = locate_executable(pgm->pgmlist[0]);
 
     if (executable == NULL) { return; } //TODO Do not do this
 
+	// Initialize a pipe to connect to the next executable (or redirect if last loop)
     pipe(in_pipe);
 
+    // TODO make it work
+    if (pgm->next == NULL && fd_in >= 0) {
+      printf("This\n");
+      close(in_pipe[0]);
+      in_pipe[0] = fd_in;
+    }
+
+	// Start executable and connect pipes for a new child
     fork_executable3(executable,
                      pgm->pgmlist,
                      in_pipe,
                      out_pipe); //TODO handle zombie apocalypse (OS denies fork())
-
+    
+    // Closes the parents pipes between children
     close(out_pipe[0]);
     close(out_pipe[1]);
 
+	// Prepare for the next loop
     out_pipe[0] = in_pipe[0];
     out_pipe[1] = in_pipe[1];
-
   }
 
+/*  // Prepares for possible redirect
   chain_in[0] = in_pipe[0];
-  chain_in[1] = in_pipe[1];
+  chain_in[1] = in_pipe[1];*/
 
   //Close unused ends
-  close(chain_in[0]); //We do not read input
+//  close(chain_in[0]); //We do not read input
+  close(in_pipe[0]);
   close(chain_out[1]); //We do not write output
 
   char buf[1024];
@@ -151,15 +190,22 @@ void handle_command(Command *cmd) {
   while ((read_len = read(chain_out[0], buf, 1024)) > 0) {
     write(STDOUT_FILENO, buf, read_len);
   }
-
-
+  
+  close(in_pipe[1]);
+  close(chain_out[0]);
+/*  close(chain_in[1]);
+  close(chain_out[0]);*/
+  
   //TODO redirects
 
   //TODO maybe read and write to standard out
 
+  // Because we only have one parent
   while (wait(NULL) > 0);
 
 }
+
+
 
 //Forks an executable and redirects standard input and output to provided pipes and closes unused pipes on child's end
 pid_t fork_executable3(char *executable, char **argv, int in_pipe[2], int out_pipe[2]) {
@@ -187,6 +233,8 @@ pid_t fork_executable3(char *executable, char **argv, int in_pipe[2], int out_pi
 
   return pid;
 }
+
+
 
 pid_t fork_executable2(char *executable, char **argv, int io_fd[3]) {
   int read_pipe[2];
@@ -231,6 +279,8 @@ pid_t fork_executable2(char *executable, char **argv, int io_fd[3]) {
   return pid;
 }
 
+
+
 pid_t fork_executable(char *executable, char **argv, int read_pipe[2], int write_pipe[2]) {
   pid_t pid = fork();
 
@@ -251,6 +301,8 @@ pid_t fork_executable(char *executable, char **argv, int read_pipe[2], int write
 
   return pid;
 }
+
+
 
 char *locate_executable(char *name) {
   int name_len = strlen(name);
