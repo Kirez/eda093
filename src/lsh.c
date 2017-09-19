@@ -39,8 +39,10 @@ void stripwhite(char *);
 char *locate_executable(char *name);
 pid_t fork_executable(char *executable, char **argv, int read_pipe[2], int write_pipe[2]);
 pid_t fork_executable2(char *executable, char **argv, int io_fd[2]);
-pid_t fork_executable3(char *executable, char **argv, int in_pipe[2], int out_pipe[2]);
+pid_t fork_executable3(char *executable, char **argv, int *in_pipe, int *out_pipe, int background);
 void handle_command(Command *cmd);
+void handle_sigchld(int sig);
+void handle_sigint(int sig);
 
 /* When non-zero, this global means the user is done using this program. */
 int done = 0;
@@ -54,6 +56,14 @@ int done = 0;
 int main(void) {
   Command cmd;
   int n;
+
+  if (signal(SIGCHLD, &handle_sigchld) < 0) {
+    fprintf(stderr, "ERROR: failed to register SIGCHLD handler (%d)\n", errno);
+  };
+
+  if (signal(SIGINT, &handle_sigint) < 0) {
+    fprintf(stderr, "ERROR: failed to register SIGINT handler (%d)\n", errno);
+  }
 
   while (!done) {
 
@@ -77,8 +87,18 @@ int main(void) {
         n = parse(line, &cmd);
 
 		// TODO allt stuff ligger där
-		
-        handle_command(&cmd);
+
+        if (strcmp(cmd.pgm->pgmlist[0], "exit") == 0) {
+          //TODO Kill the children
+          exit(0);
+        }
+        else if (strcmp(cmd.pgm->pgmlist[0], "cd") == 0) {
+          if (chdir(cmd.pgm->pgmlist[1]) < 0) {
+            printf("lsh: cd: directory: %s not found\n", cmd.pgm->pgmlist[1]);
+          }
+        } else {
+          handle_command(&cmd);
+        }
       }
     }
 
@@ -87,6 +107,21 @@ int main(void) {
     }
   }
   return 0;
+}
+
+void handle_sigint(int sig) {
+  // Prevent SIGINT from terminating parent by doing... nothing
+  printf("\n> "); // Yes, but it looks good in the terminal
+}
+
+void handle_sigchld(int sig) {
+  int status;
+  pid_t pid;
+
+  do {
+    pid = waitpid(-1, &status, WNOHANG);
+  } while (pid > 0);
+
 }
 
 void handle_command(Command *cmd) {
@@ -132,7 +167,29 @@ void handle_command(Command *cmd) {
   }
 
   // Start last executable and connect pipes
-  fork_executable3(executable, pgm->pgmlist, in_pipe, out_pipe);
+  if (pgm->next == NULL) {
+    if (fd_out >= 0) {
+      if (fd_in >= 0) {
+        fork_executable3(executable, pgm->pgmlist, in_pipe, out_pipe, cmd->bakground);
+        //Both
+      } else {
+        fork_executable3(executable, pgm->pgmlist, NULL, out_pipe, cmd->bakground);
+        //Only Out
+      }
+    } else if (fd_in >= 0) {
+      //Only In
+      fork_executable3(executable, pgm->pgmlist, in_pipe, NULL, cmd->bakground);
+    } else {
+      //None
+      fork_executable3(executable, pgm->pgmlist, NULL, NULL, cmd->bakground);
+    }
+  } else {
+    if (fd_out >= 0) {
+      fork_executable3(executable, pgm->pgmlist, in_pipe, out_pipe, cmd->bakground);
+    } else {
+      fork_executable3(executable, pgm->pgmlist, in_pipe, NULL, cmd->bakground);
+    }
+  }
 
   // Save pipes of the last executable
   chain_out[0] = out_pipe[0];
@@ -148,14 +205,18 @@ void handle_command(Command *cmd) {
     pgm = pgm->next;
     executable = locate_executable(pgm->pgmlist[0]);
 
-    if (executable == NULL) { return; } //TODO Do not do this
+    if (executable == NULL) {
+      printf("lsh: command not found: %s\n", pgm->pgmlist[0]);
+      close(out_pipe[0]);
+      close(out_pipe[0]);
+      kill(0, SIGINT);
+      return;
+    } //TODO Do not do this
 
 	// Initialize a pipe to connect to the next executable (or redirect if last loop)
     pipe(in_pipe);
 
-    // TODO make it work
     if (pgm->next == NULL && fd_in >= 0) {
-      printf("This\n");
       close(in_pipe[0]);
       in_pipe[0] = fd_in;
     }
@@ -164,7 +225,8 @@ void handle_command(Command *cmd) {
     fork_executable3(executable,
                      pgm->pgmlist,
                      in_pipe,
-                     out_pipe); //TODO handle zombie apocalypse (OS denies fork())
+                     out_pipe,
+                     cmd->bakground); //TODO handle zombie apocalypse (OS denies fork())
     
     // Closes the parents pipes between children
     close(out_pipe[0]);
@@ -182,49 +244,47 @@ void handle_command(Command *cmd) {
   //Close unused ends
 //  close(chain_in[0]); //We do not read input
   close(in_pipe[0]);
-  close(chain_out[1]); //We do not write output
+  if (chain_out[1] == fd_out) {
+    close(chain_out[1]); //We do not write output
+  }
 
   char buf[1024];
   int read_len;
-
-  while ((read_len = read(chain_out[0], buf, 1024)) > 0) {
-    write(STDOUT_FILENO, buf, read_len);
-  }
   
   close(in_pipe[1]);
   close(chain_out[0]);
 /*  close(chain_in[1]);
   close(chain_out[0]);*/
-  
-  //TODO redirects
-
-  //TODO maybe read and write to standard out
 
   // Because we only have one parent
-  while (wait(NULL) > 0);
-
+  if (cmd->bakground == 0) {
+    while (waitpid(0, NULL, 0) > 0);
+  }
 }
 
 
 
 //Forks an executable and redirects standard input and output to provided pipes and closes unused pipes on child's end
-pid_t fork_executable3(char *executable, char **argv, int in_pipe[2], int out_pipe[2]) {
+pid_t fork_executable3(char *executable, char **argv, int *in_pipe, int *out_pipe, int background) {
   pid_t pid = fork();
+
+  if (background == 1) {
+    setpgid(0,0);
+  }
 
   if (pid == 0) {
     //Child
-    //Makes it so reading from standard in is equal to reading from parent's write end
-    dup2(in_pipe[0], STDIN_FILENO);
-    //Makes it so writing to standard out is equal to writing to parent's read end
-    dup2(out_pipe[1], STDOUT_FILENO);
-    //Replaced by STDIN_FILENO
-    close(in_pipe[0]);
-    //close Parent's write end
-    close(in_pipe[1]);
-    //close Parent's read end
-    close(out_pipe[0]);
-    //Replaced by STDOUT_FILENO
-    close(out_pipe[1]);
+    if (out_pipe != NULL) {
+      dup2(out_pipe[1], STDOUT_FILENO);
+      close(out_pipe[0]);
+      close(out_pipe[1]);
+    }
+    if (in_pipe != NULL) {
+      dup2(in_pipe[0], STDIN_FILENO);
+      close(in_pipe[0]);
+      close(in_pipe[1]);
+    }
+
     execv(executable, argv);
     return -1; //Only gets here if running of executable failed
   }
