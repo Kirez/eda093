@@ -129,7 +129,8 @@ void handle_command(Command *cmd) {
   Pgm *pgm = cmd->pgm;
   if (pgm->pgmlist == NULL) { return; }
 
-  //Needed when its necessary to kill child processes spawned by this call that run in background
+  // When a piped command can't be found all other forked commands must be killed
+  // pid_array is used to keep track of forked commands started by this call
   pid_t pid_array[MAX_PIPED_COMMANDS];
   pid_array[0] = 0; //End of array
   int pid_array_cursor = 0;
@@ -216,20 +217,13 @@ void handle_command(Command *cmd) {
 
     if (executable == NULL) {
       printf("lsh: command not found: %s\n", pgm->pgmlist[0]);
-      if (cmd->bakground == 0) {
-        kill(0, SIGINT); //Kills all child processes in the same group aka foreground
-        while (waitpid(0, NULL, 0) > 0); //This is to make sure prompt is placed after any output that may happen
 
-      } else {
-        // Background processes are more tricky we can't kill the whole group without killing
-        // Ongoing commands that is running in the background we have to make use of the process record
-        // of processes started by this function call aka pid_array
-        int index = 0;
-        while (pid_array[index] > 0) {
-          kill(pid_array[index], SIGKILL);
-          waitpid(pid_array[index], NULL, 0);
-          index++;
-        }
+      //Kill all forks started up till this point
+      int index = 0;
+      while (pid_array[index] > 0) {
+        kill(pid_array[index], SIGKILL);
+        waitpid(pid_array[index], NULL, 0);
+        index++;
       }
 
       close(out_pipe[0]);
