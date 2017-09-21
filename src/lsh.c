@@ -21,12 +21,16 @@
 #include <stdlib.h>
 #include <readline/readline.h>
 #include <readline/history.h>
-#include "parse.h"
-
 #include <unistd.h>
 #include <sys/wait.h>
 #include <errno.h>
 #include <fcntl.h>
+
+#include "parse.h"
+
+// This should be more than enough for the scope of the lab.
+// We suspect that adding support for unlimited piped commands is unnecessary
+#define MAX_PIPED_COMMANDS 50
 
 /*
  * Function declarations
@@ -41,9 +45,6 @@ void handle_command(Command *cmd);
 void handle_sigchld(int sig);
 void handle_sigint(int sig);
 
-/* When non-zero, this global means the user is done using this program. */
-int done = 0;
-
 /*
  * Name: main
  *
@@ -53,6 +54,8 @@ int done = 0;
 int main(void) {
   Command cmd;
   int n;
+  /* When non-zero, this global means the user is done using this program. */ //Unnecessary global moved here
+  int done = 0;
 
   if (signal(SIGCHLD, &handle_sigchld) < 0) {
     fprintf(stderr, "ERROR: failed to register SIGCHLD handler (%d)\n", errno);
@@ -107,7 +110,7 @@ int main(void) {
 
 void handle_sigint(int sig) {
   // Prevent SIGINT from terminating parent by doing... nothing
-  printf("\n> "); // Yes, but it looks good in the terminal
+  // printf("\n> "); // Yes, but it looks good in the terminal // Turns out it does not look good
 }
 
 void handle_sigchld(int sig) {
@@ -126,6 +129,11 @@ void handle_command(Command *cmd) {
   Pgm *pgm = cmd->pgm;
   if (pgm->pgmlist == NULL) { return; }
 
+  //Needed when its necessary to kill child processes spawned by this call that run in background
+  pid_t pid_array[MAX_PIPED_COMMANDS];
+  pid_array[0] = 0; //End of array
+  int pid_array_cursor = 0;
+
   // creates file descriptors for redirects of rstdout and rstdin
   int fd_out;
   int fd_in;
@@ -134,9 +142,6 @@ void handle_command(Command *cmd) {
                 S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
   fd_in = open(cmd->rstdin, O_RDONLY);
 
-  // chain_in/out is the input/output pipe for the entire chain
-  int chain_in[2];
-  int chain_out[2];
   // In/Out pipe variables for use during the chaining
   int in_pipe[2];
   int out_pipe[2];
@@ -166,32 +171,38 @@ void handle_command(Command *cmd) {
 
   // Start last executable and connect pipes
   if (pgm->next == NULL) {
+    // This means that this is the first and only command to fork
     if (fd_out >= 0) {
       if (fd_in >= 0) {
-        fork_executable(executable, pgm->pgmlist, in_pipe, out_pipe, cmd->bakground);
-        //Both
+        //Both input and output is to be redirected
+        pid_array[pid_array_cursor++] = fork_executable(executable, pgm->pgmlist, in_pipe, out_pipe, cmd->bakground);
+        pid_array[pid_array_cursor] = 0;
       } else {
-        fork_executable(executable, pgm->pgmlist, NULL, out_pipe, cmd->bakground);
-        //Only Out
+        //Only output is to be redirected
+        pid_array[pid_array_cursor++] = fork_executable(executable, pgm->pgmlist, NULL, out_pipe, cmd->bakground);
+        pid_array[pid_array_cursor] = 0;
       }
     } else if (fd_in >= 0) {
-      //Only In
-      fork_executable(executable, pgm->pgmlist, in_pipe, NULL, cmd->bakground);
+      //Only input is to be redirected
+      pid_array[pid_array_cursor++] = fork_executable(executable, pgm->pgmlist, in_pipe, NULL, cmd->bakground);
+      pid_array[pid_array_cursor] = 0;
     } else {
-      //None
-      fork_executable(executable, pgm->pgmlist, NULL, NULL, cmd->bakground);
+      //Only output is to be redirected
+      pid_array[pid_array_cursor++] = fork_executable(executable, pgm->pgmlist, NULL, NULL, cmd->bakground);
+      pid_array[pid_array_cursor] = 0;
     }
   } else {
+    //This means that this is the last command in the chain and there exists a fork that pipes its output here
     if (fd_out >= 0) {
-      fork_executable(executable, pgm->pgmlist, in_pipe, out_pipe, cmd->bakground);
+      //Output is to be redirected
+      pid_array[pid_array_cursor++] = fork_executable(executable, pgm->pgmlist, in_pipe, out_pipe, cmd->bakground);
+      pid_array[pid_array_cursor] = 0;
     } else {
-      fork_executable(executable, pgm->pgmlist, in_pipe, NULL, cmd->bakground);
+      //The fork's output is to be to parent's standard out
+      pid_array[pid_array_cursor++] = fork_executable(executable, pgm->pgmlist, in_pipe, NULL, cmd->bakground);
+      pid_array[pid_array_cursor] = 0;
     }
   }
-
-  // Save pipes of the last executable
-  chain_out[0] = out_pipe[0];
-  chain_out[1] = out_pipe[1];
 
   // The input pipes of the last executable is now the output pipe of the next executable
   out_pipe[0] = in_pipe[0];
@@ -203,11 +214,26 @@ void handle_command(Command *cmd) {
     pgm = pgm->next;
     executable = locate_executable(pgm->pgmlist[0]);
 
-    if (executable == NULL) { //TODO: Handle background process not found
+    if (executable == NULL) {
       printf("lsh: command not found: %s\n", pgm->pgmlist[0]);
+      if (cmd->bakground == 0) {
+        kill(0, SIGINT); //Kills all child processes in the same group aka foreground
+        while (waitpid(0, NULL, 0) > 0); //This is to make sure prompt is placed after any output that may happen
+
+      } else {
+        // Background processes are more tricky we can't kill the whole group without killing
+        // Ongoing commands that is running in the background we have to make use of the process record
+        // of processes started by this function call aka pid_array
+        int index = 0;
+        while (pid_array[index] > 0) {
+          kill(pid_array[index], SIGKILL);
+          waitpid(pid_array[index], NULL, 0);
+          index++;
+        }
+      }
+
       close(out_pipe[0]);
-      close(out_pipe[0]);
-      kill(0, SIGINT);
+      close(out_pipe[1]);
       return;
     }
 
@@ -220,11 +246,12 @@ void handle_command(Command *cmd) {
     }
 
     // Start executable and connect pipes for a new child
-    fork_executable(executable,
-                    pgm->pgmlist,
-                    in_pipe,
-                    out_pipe,
-                    cmd->bakground); //TODO handle zombie apocalypse (OS denies fork())
+    pid_array[pid_array_cursor++] = fork_executable(executable,
+                                                    pgm->pgmlist,
+                                                    in_pipe,
+                                                    out_pipe,
+                                                    cmd->bakground);
+    pid_array[pid_array_cursor] = 0;
 
     // Closes the parents pipes between children
     close(out_pipe[0]);
@@ -235,32 +262,26 @@ void handle_command(Command *cmd) {
     out_pipe[1] = in_pipe[1];
   }
 
-  //Close unused ends
+  // At this point the first command has been forked and directed so it is safe to close input pipes
   close(in_pipe[0]);
-  if (chain_out[1] == fd_out) {
-    close(chain_out[1]); //We do not write output
-  }
-
   close(in_pipe[1]);
-  close(chain_out[0]);
 
-  // We can wait for all because we are the only parent
+  // We can wait for all in our process group (foreground) because we are the only parent
   if (cmd->bakground == 0) {
     while (waitpid(0, NULL, 0) > 0);
   }
 }
 
-
 //Forks an executable and redirects standard input and output to provided pipes and closes unused pipes on child's end
 pid_t fork_executable(char *executable, char **argv, int *in_pipe, int *out_pipe, int background) {
   pid_t pid = fork();
 
-  if (background == 1) {
-    setpgid(0, 0);
-  }
-
   if (pid == 0) {
     //Child
+    if (background == 1) {
+      setpgid(0, 0);
+    }
+
     if (out_pipe != NULL) {
       dup2(out_pipe[1], STDOUT_FILENO);
       close(out_pipe[0]);
@@ -277,7 +298,6 @@ pid_t fork_executable(char *executable, char **argv, int *in_pipe, int *out_pipe
   }
 
   //Parent
-
   return pid;
 }
 
