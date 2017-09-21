@@ -25,7 +25,6 @@
 
 #include <unistd.h>
 #include <sys/wait.h>
-#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 
@@ -37,9 +36,7 @@ void PrintCommand(int, Command *);
 void PrintPgm(Pgm *);
 void stripwhite(char *);
 char *locate_executable(char *name);
-pid_t fork_executable(char *executable, char **argv, int read_pipe[2], int write_pipe[2]);
-pid_t fork_executable2(char *executable, char **argv, int io_fd[2]);
-pid_t fork_executable3(char *executable, char **argv, int *in_pipe, int *out_pipe, int background);
+pid_t fork_executable(char *executable, char **argv, int *in_pipe, int *out_pipe, int background);
 void handle_command(Command *cmd);
 void handle_sigchld(int sig);
 void handle_sigint(int sig);
@@ -86,13 +83,12 @@ int main(void) {
         /* execute it */
         n = parse(line, &cmd);
 
-		// TODO allt stuff ligger där
+        // TODO allt stuff ligger där
 
         if (strcmp(cmd.pgm->pgmlist[0], "exit") == 0) {
           //TODO Kill the children
           exit(0);
-        }
-        else if (strcmp(cmd.pgm->pgmlist[0], "cd") == 0) {
+        } else if (strcmp(cmd.pgm->pgmlist[0], "cd") == 0) {
           if (chdir(cmd.pgm->pgmlist[1]) < 0) {
             printf("lsh: cd: directory: %s not found\n", cmd.pgm->pgmlist[1]);
           }
@@ -129,13 +125,15 @@ void handle_command(Command *cmd) {
   if (cmd->pgm == NULL) { return; }
   Pgm *pgm = cmd->pgm;
   if (pgm->pgmlist == NULL) { return; }
-  
+
   // creates file descriptors for redirects of rstdout and rstdin
   int fd_out;
   int fd_in;
-  fd_out = open(cmd->rstdout, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+  fd_out = open(cmd->rstdout,
+                O_WRONLY | O_CREAT | O_TRUNC,
+                S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
   fd_in = open(cmd->rstdin, O_RDONLY);
-  
+
   // chain_in/out is the input/output pipe for the entire chain
   int chain_in[2];
   int chain_out[2];
@@ -151,7 +149,7 @@ void handle_command(Command *cmd) {
     return;
   }
 
-  // Initialize pipes for te last executable and check for errors
+  // Initialize pipes for the last executable and check for errors
   if (pipe(in_pipe) < 0 || pipe(out_pipe) < 0) {
     fprintf(stderr, "ERROR: system call pipe failed (%d)\n", errno);
   }
@@ -162,7 +160,7 @@ void handle_command(Command *cmd) {
     out_pipe[1] = fd_out;
   }
   if (pgm->next == NULL && fd_in >= 0) {
-     close(in_pipe[0]);
+    close(in_pipe[0]);
     in_pipe[0] = fd_in;
   }
 
@@ -170,24 +168,24 @@ void handle_command(Command *cmd) {
   if (pgm->next == NULL) {
     if (fd_out >= 0) {
       if (fd_in >= 0) {
-        fork_executable3(executable, pgm->pgmlist, in_pipe, out_pipe, cmd->bakground);
+        fork_executable(executable, pgm->pgmlist, in_pipe, out_pipe, cmd->bakground);
         //Both
       } else {
-        fork_executable3(executable, pgm->pgmlist, NULL, out_pipe, cmd->bakground);
+        fork_executable(executable, pgm->pgmlist, NULL, out_pipe, cmd->bakground);
         //Only Out
       }
     } else if (fd_in >= 0) {
       //Only In
-      fork_executable3(executable, pgm->pgmlist, in_pipe, NULL, cmd->bakground);
+      fork_executable(executable, pgm->pgmlist, in_pipe, NULL, cmd->bakground);
     } else {
       //None
-      fork_executable3(executable, pgm->pgmlist, NULL, NULL, cmd->bakground);
+      fork_executable(executable, pgm->pgmlist, NULL, NULL, cmd->bakground);
     }
   } else {
     if (fd_out >= 0) {
-      fork_executable3(executable, pgm->pgmlist, in_pipe, out_pipe, cmd->bakground);
+      fork_executable(executable, pgm->pgmlist, in_pipe, out_pipe, cmd->bakground);
     } else {
-      fork_executable3(executable, pgm->pgmlist, in_pipe, NULL, cmd->bakground);
+      fork_executable(executable, pgm->pgmlist, in_pipe, NULL, cmd->bakground);
     }
   }
 
@@ -205,15 +203,15 @@ void handle_command(Command *cmd) {
     pgm = pgm->next;
     executable = locate_executable(pgm->pgmlist[0]);
 
-    if (executable == NULL) {
+    if (executable == NULL) { //TODO: Handle background process not found
       printf("lsh: command not found: %s\n", pgm->pgmlist[0]);
       close(out_pipe[0]);
       close(out_pipe[0]);
       kill(0, SIGINT);
       return;
-    } //TODO Do not do this
+    }
 
-	// Initialize a pipe to connect to the next executable (or redirect if last loop)
+    // Initialize a pipe to connect to the next executable (or redirect if last loop)
     pipe(in_pipe);
 
     if (pgm->next == NULL && fd_in >= 0) {
@@ -221,55 +219,44 @@ void handle_command(Command *cmd) {
       in_pipe[0] = fd_in;
     }
 
-	// Start executable and connect pipes for a new child
-    fork_executable3(executable,
-                     pgm->pgmlist,
-                     in_pipe,
-                     out_pipe,
-                     cmd->bakground); //TODO handle zombie apocalypse (OS denies fork())
-    
+    // Start executable and connect pipes for a new child
+    fork_executable(executable,
+                    pgm->pgmlist,
+                    in_pipe,
+                    out_pipe,
+                    cmd->bakground); //TODO handle zombie apocalypse (OS denies fork())
+
     // Closes the parents pipes between children
     close(out_pipe[0]);
     close(out_pipe[1]);
 
-	// Prepare for the next loop
+    // Prepare for the next loop
     out_pipe[0] = in_pipe[0];
     out_pipe[1] = in_pipe[1];
   }
 
-/*  // Prepares for possible redirect
-  chain_in[0] = in_pipe[0];
-  chain_in[1] = in_pipe[1];*/
-
   //Close unused ends
-//  close(chain_in[0]); //We do not read input
   close(in_pipe[0]);
   if (chain_out[1] == fd_out) {
     close(chain_out[1]); //We do not write output
   }
 
-  char buf[1024];
-  int read_len;
-  
   close(in_pipe[1]);
   close(chain_out[0]);
-/*  close(chain_in[1]);
-  close(chain_out[0]);*/
 
-  // Because we only have one parent
+  // We can wait for all because we are the only parent
   if (cmd->bakground == 0) {
     while (waitpid(0, NULL, 0) > 0);
   }
 }
 
 
-
 //Forks an executable and redirects standard input and output to provided pipes and closes unused pipes on child's end
-pid_t fork_executable3(char *executable, char **argv, int *in_pipe, int *out_pipe, int background) {
+pid_t fork_executable(char *executable, char **argv, int *in_pipe, int *out_pipe, int background) {
   pid_t pid = fork();
 
   if (background == 1) {
-    setpgid(0,0);
+    setpgid(0, 0);
   }
 
   if (pid == 0) {
@@ -294,85 +281,18 @@ pid_t fork_executable3(char *executable, char **argv, int *in_pipe, int *out_pip
   return pid;
 }
 
-
-
-pid_t fork_executable2(char *executable, char **argv, int io_fd[3]) {
-  int read_pipe[2];
-  int write_pipe[2];
-  int error_pipe[2];
-
-  if (pipe(read_pipe) < 0) {
-    fprintf(stderr, "ERROR: read pipe failed (%d)\n", errno);
-    return -1;
-  }
-  if (pipe(write_pipe) < 0) {
-    fprintf(stderr, "ERROR: write pipe failed (%d)\n", errno);
-    return -1;
-  }
-  if (pipe(error_pipe) < 0) {
-    fprintf(stderr, "ERROR: error pipe failed (%d)\n", errno);
-  }
-
-  pid_t pid = fork();
-
-  if (pid < 0) {
-    fprintf(stderr, "ERROR: fork failed (%d)\n", errno);
-    return -1;
-  } else if (pid == 0) {
-    dup2(write_pipe[0], STDIN_FILENO);
-    dup2(read_pipe[1], STDOUT_FILENO);
-    dup2(error_pipe[1], STDERR_FILENO);
-    close(read_pipe[0]);
-    close(write_pipe[1]);
-    close(error_pipe[0]);
-    execvp(executable, argv);
-    return -1; // Execution never reaches this point assuming execvp is successful
-  } else {
-    close(read_pipe[1]);
-    close(write_pipe[0]);
-    close(error_pipe[1]);
-    io_fd[0] = read_pipe[0];
-    io_fd[1] = write_pipe[1];
-    io_fd[2] = error_pipe[0];
-  }
-
-  return pid;
-}
-
-
-
-pid_t fork_executable(char *executable, char **argv, int read_pipe[2], int write_pipe[2]) {
-  pid_t pid = fork();
-
-  if (pid < 0) {
-    fprintf(stderr, "ERROR: fork failed (%d)\n", errno);
-    return -1;
-  } else if (pid == 0) {
-    dup2(write_pipe[0], STDIN_FILENO);
-    dup2(read_pipe[1], STDOUT_FILENO);
-    close(read_pipe[0]);
-    close(write_pipe[1]);
-    execvp(executable, argv);
-    return -1;
-  } else {
-    close(read_pipe[1]);
-    close(write_pipe[0]);
-  }
-
-  return pid;
-}
-
-
-
 char *locate_executable(char *name) {
-  int name_len = strlen(name);
+  size_t name_len = strlen(name);
+  size_t executable_location_len;
+  size_t env_entry_len;
   char *executable_location = NULL;
-  int executable_location_len;
   char *path_env = getenv("PATH");
-  char *token_str = malloc(sizeof(char) * (strlen(path_env) + 1));
-  if (token_str == NULL) { return NULL; }
+  char *token_str;
   char *env_entry;
-  int env_entry_len;
+
+  token_str = malloc(sizeof(char) * (strlen(path_env) + 1));
+
+  if (token_str == NULL) { return NULL; }
 
   strcpy(token_str, path_env);
   env_entry = strtok(token_str, ":");
