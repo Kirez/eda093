@@ -1,0 +1,30 @@
+date
+hello
+ls -al -p
+ls parser*
+ls -al > tmp.1
+cat < tmp.1 > tmp.2
+diff tmp.1 tmp.2
+ls -al | wc
+ls | sort -r
+ls | wc &
+cat < tmp.1 | wc > tmp.3
+cat tmp.1 | wc
+cat tmp.3
+abf | wc
+ls | abf
+grep apa | ls
+cd ..
+cd lab1
+cd tmp.tmp
+cd ..
+cd lab1 | abf
+ls
+cd
+pwd
+grep exit < tmp.1
+  exit
+grep exit | hej
+grep cd | wc
+ls | wc-
+exit
