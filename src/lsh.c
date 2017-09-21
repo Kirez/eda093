@@ -310,40 +310,48 @@ char *locate_executable(char *name) {
   char *token_str;
   char *env_entry;
 
-  token_str = malloc(sizeof(char) * (strlen(path_env) + 1));
+  if (strstr(name, "/") == NULL) {
+    token_str = malloc(sizeof(char) * (strlen(path_env) + 1));
 
-  if (token_str == NULL) { return NULL; }
+    if (token_str == NULL) { return NULL; }
 
-  strcpy(token_str, path_env);
-  env_entry = strtok(token_str, ":");
+    strcpy(token_str, path_env);
+    env_entry = strtok(token_str, ":");
 
-  do {
-    env_entry_len = strlen(env_entry);
-    executable_location_len = 1 + env_entry_len + name_len;
+    do {
+      env_entry_len = strlen(env_entry);
+      executable_location_len = 1 + env_entry_len + name_len;
 
-    char adjust = 0;
-    if (env_entry[env_entry_len - 1] != '/') {
-      executable_location_len += 1;
-      adjust = 1;
+      char adjust = 0;
+      if (env_entry[env_entry_len - 1] != '/') {
+        executable_location_len += 1;
+        adjust = 1;
+      }
+
+      executable_location = calloc(executable_location_len, sizeof(char));
+      if (executable_location == NULL) { return NULL; }
+      strcpy(executable_location, env_entry);
+      if (adjust) { strcat(executable_location, "/"); }
+      strcat(executable_location, name);
+
+      if (access(executable_location, X_OK) == 0) {
+        break;
+      } else {
+        free(executable_location);
+        executable_location = NULL;
+      }
+
+      env_entry = strtok(NULL, ":");
+    } while (env_entry != NULL);
+
+    free(token_str);
+  } else {
+    //name is a path
+    if (access(name, X_OK) == 0) {
+      executable_location = name;
     }
+  }
 
-    executable_location = calloc(executable_location_len, sizeof(char));
-    if (executable_location == NULL) { return NULL; }
-    strcpy(executable_location, env_entry);
-    if (adjust) { strcat(executable_location, "/"); }
-    strcat(executable_location, name);
-
-    if (access(executable_location, X_OK) == 0) {
-      break;
-    } else {
-      free(executable_location);
-      executable_location = NULL;
-    }
-
-    env_entry = strtok(NULL, ":");
-  } while (env_entry != NULL);
-
-  free(token_str);
   return executable_location;
 }
 
