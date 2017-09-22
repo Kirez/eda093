@@ -1,0 +1,89 @@
+			+----------------------------+
+			|       EDA093/DIT401        |
+			| LAB 1: SHELL PROGRAMMING   |
+			|     DESIGN DOCUMENT        |
+			+----------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Erik Källberg kalerik@student.chalmers.se
+Therese Tengdahl theten@student.chalmers.se
+
+---- PRELIMINARIES ----<
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please include them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course instructors.
+
+Offline:
+    We made use of the man files
+
+Online:
+    How do I chain stdout in one child process to stdin in another child in C?
+    https://stackoverflow.com/questions/7281894/how-do-i-chain-stdout-in-one-child-process-to-stdin-in-another-child-in-c?noredirect=1&lq=1
+
+			   COMMAND SHELL
+			   =============
+
+---- LOGISTICS ----
+
+These questions will help us to keep track of the difficulty level of
+assignments, as well as keeping track of which team members worked on
+which parts.
+
+>> L1: How many hours did each team member spend on this assignment?
+   Make sure that each member's total time is listed.
+
+>> L2: What did each team member focus on for this assignment?  Keep
+   descriptions to 25-30 words or less.
+
+L1 We spent about 13 hours each
+
+L2 We applied pair programming. Which means that we both were 
+involved in all parts of the program and we therefore took turns writing the code.
+
+			  SURVEY QUESTIONS
+			  ================
+
+Answering these questions is optional, but it will help us improve the
+course in future years.  Feel free to tell us anything you want - these
+questions are just to spur your thoughts.  Also, feel free to be completely
+honest if there are issues with the assignment or the course - you won't be
+penalized.  We can't fix things until we know about them.  :-)
+
+>> In your opinion, was this assignment, or any of the parts of it, too
+>> easy or too hard?  Did it take too long or too little time?
+It was a reasonable assignment, but it was structured in a way that it was hard to understand what was wanted at first,
+since the text at pingpong is a bit messy.
+For example it seemed at first that the forking of child processes were to be made in a recursive function. It became clear that
+either way was fine though.
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+Pipes was really hard in the beginning but after getting through it we have gained alot of insight in how that part work.
+Working with pipes and the dup2 system call gave insight into how file descriptors work in POSIX.
+
+>> Were there any parts of the assignment that you felt were unnecessarily
+>> tedious or pointless?
+Spending time figuring out the structure of the assignment on pinpong.
+There was more than enough information about the assignment in the downloadable pdf. There were some helpful tips on
+pingpong though, but it could have been clearer that this was extra help rather than nessecary info.
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+Make a point of telling future students the importance of the provided code in our case this was the parser part.
+
+>> Do you have any suggestions for the instructor and/or TAs to more
+>> effectively assist students, either for future quarters or the remaining
+>> projects?
+We could have made use of a more clear help queue during labs, for when you need more help than you signed up for in 
+the doodle.
+
+>> Any other comments?
+None.
