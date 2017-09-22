@@ -1,8 +1,8 @@
-/* 
+/*
  * Main source code file for lsh shell program
  *
  * You are free to add functions to this file.
- * If you want to add functions in a separate file 
+ * If you want to add functions in a separate file
  * you will need to modify Makefile to compile
  * your additional functions.
  *
@@ -10,10 +10,10 @@
  * easier for us while grading your assignment.
  *
  * Submit the entire lab1 folder as a tar archive (.tgz).
- * Command to create submission archive: 
+ * Command to create submission archive:
       $> tar cvf lab1.tgz lab1/
  *
- * All the best 
+ * All the best
  */
 
 
@@ -86,10 +86,9 @@ int main(void) {
         /* execute it */
         n = parse(line, &cmd);
 
-        // TODO allt stuff ligger där
 
         if (strcmp(cmd.pgm->pgmlist[0], "exit") == 0) {
-          //TODO Kill the children
+          kill(0, SIGKILL); //Kill foreground but leave background
           exit(0);
         } else if (strcmp(cmd.pgm->pgmlist[0], "cd") == 0) {
           if (chdir(cmd.pgm->pgmlist[1]) < 0) {
@@ -110,7 +109,7 @@ int main(void) {
 
 void handle_sigint(int sig) {
   // Prevent SIGINT from terminating parent by doing... nothing
-  // printf("\n> "); // Yes, but it looks good in the terminal // Turns out it does not look good
+  printf("\n> "); // Yes, but it looks better most of the time
 }
 
 void handle_sigchld(int sig) {
@@ -123,6 +122,15 @@ void handle_sigchld(int sig) {
 
 }
 
+
+
+/*
+ * Name: handle_command
+ *
+ * Description: Takes a command and handle by connecting executables with pipes
+ * to other executables or redirection targets (rstdout and rstdin)
+ *
+ */
 void handle_command(Command *cmd) {
   if (cmd == NULL) { return; }
   if (cmd->pgm == NULL) { return; }
@@ -234,6 +242,7 @@ void handle_command(Command *cmd) {
     // Initialize a pipe to connect to the next executable (or redirect if last loop)
     pipe(in_pipe);
 
+    // Closes in pipe and connects input to stdin
     if (pgm->next == NULL && fd_in >= 0) {
       close(in_pipe[0]);
       in_pipe[0] = fd_in;
@@ -266,12 +275,21 @@ void handle_command(Command *cmd) {
   }
 }
 
-//Forks an executable and redirects standard input and output to provided pipes and closes unused pipes on child's end
+
+/*
+ * Name: fork_executable
+ *
+ * Description: Forks an executable and redirects standard input and output to
+ * provided pipes and closes unused pipes on child's end
+ *
+ */
 pid_t fork_executable(char *executable, char **argv, int *in_pipe, int *out_pipe, int background) {
   pid_t pid = fork();
 
   if (pid == 0) {
     //Child
+    signal(SIGINT, SIG_DFL);
+
     if (background == 1) {
       setpgid(0, 0);
     }
@@ -291,10 +309,18 @@ pid_t fork_executable(char *executable, char **argv, int *in_pipe, int *out_pipe
     return -1; //Only gets here if running of executable failed
   }
 
-  //Parent
+  // Only parent gets here
   return pid;
 }
 
+
+/*
+ * Name: locate_executable
+ *
+ * Description: Finds the executable the user wants to use
+ * and returns its location
+ *
+ */
 char *locate_executable(char *name) {
   size_t name_len = strlen(name);
   size_t executable_location_len;
